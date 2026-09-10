@@ -126,12 +126,12 @@ class TaskAlignedAssigner(nn.Module):
         mask_pos, align_metric, overlaps = self.get_pos_mask(
             pd_scores, pd_bboxes, gt_labels, gt_bboxes, anc_points, mask_gt
         )
-
+        # 去重--如果一个bbox被多个gt选中,要选择overlap最大的gt
         target_gt_idx, fg_mask, mask_pos = self.select_highest_overlaps(
             mask_pos, overlaps, self.n_max_boxes, align_metric
         )
 
-        # Assigned target
+        # Assigned target--是将“稀疏”的真实标签（Ground Truth）转换为与模型预测输出形状(8400)一致的“密集”目标张量
         target_labels, target_bboxes, target_scores = self.get_targets(gt_labels, gt_bboxes, target_gt_idx, fg_mask)
 
         # Normalize
@@ -161,7 +161,7 @@ class TaskAlignedAssigner(nn.Module):
         """
         mask_in_gts = self.select_candidates_in_gts(anc_points, gt_bboxes, mask_gt)
         # Get anchor_align metric, (b, max_num_obj, h*w)
-        align_metric, overlaps = self.get_box_metrics(pd_scores, pd_bboxes, gt_labels, gt_bboxes, mask_in_gts * mask_gt)
+        align_metric, overlaps = self.get_box_metrics(pd_scores, pd_bboxes, gt_labels, gt_bboxes, mask_in_gts * mask_gt)    #mask_in_gts * mask_gt我觉得这里的乘法多余了,ai说是防止假戏真做(把填充的当成gt框),有这个比较保险
         # Get topk_metric mask, (b, max_num_obj, h*w)
         mask_topk = self.select_topk_candidates(align_metric, topk_mask=mask_gt.expand(-1, -1, self.topk).bool())
         # Merge all mask to a final mask, (b, max_num_obj, h*w)
@@ -327,7 +327,7 @@ class TaskAlignedAssigner(nn.Module):
         if fg_mask.max() > 1:  # one anchor is assigned to multiple gt_bboxes
             mask_multi_gts = (fg_mask.unsqueeze(1) > 1).expand(-1, n_max_boxes, -1)  # (b, n_max_boxes, h*w)
 
-            max_overlaps_idx = overlaps.argmax(1)  # (b, h*w)
+            max_overlaps_idx = overlaps.argmax(1)  #求每个bbox和哪个gt的overlap最大,返回对应gt的索引 (b, h*w)
             is_max_overlaps = torch.zeros(mask_pos.shape, dtype=mask_pos.dtype, device=mask_pos.device)
             is_max_overlaps.scatter_(1, max_overlaps_idx.unsqueeze(1), 1)
             mask_pos = torch.where(mask_multi_gts, is_max_overlaps, mask_pos).float()  # (b, n_max_boxes, h*w)

@@ -414,13 +414,13 @@ class v8DetectionLoss:
         batch_size = pred_scores.shape[0]
         imgsz = torch.tensor(preds["feats"][0].shape[2:], device=self.device, dtype=dtype) * self.stride[0]
 
-        # Targets
+        # Targets--这里把gtbox转成[bs,框数量(一张图上最多数量不够补0),5(cls+box)]
         targets = torch.cat((batch["batch_idx"].view(-1, 1), batch["cls"].view(-1, 1), batch["bboxes"]), 1)
         targets = self.preprocess(targets.to(self.device), batch_size, scale_tensor=imgsz[[1, 0, 1, 0]])
         gt_labels, gt_bboxes = targets.split((1, 4), 2)  # cls, xyxy
-        mask_gt = gt_bboxes.sum(2, keepdim=True).gt_(0.0)
+        mask_gt = gt_bboxes.sum(2, keepdim=True).gt_(0.0)   #记录哪里真的有框
 
-        # Pboxes
+        # Pboxes--dfl解码
         pred_bboxes = self.bbox_decode(anchor_points, pred_distri)  # xyxy, (b, h*w, 4)
 
         _, target_bboxes, target_scores, fg_mask, target_gt_idx = self.assigner(
