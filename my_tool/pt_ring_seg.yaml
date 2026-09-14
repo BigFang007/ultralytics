@@ -1,0 +1,8 @@
+# PT ring instance-segmentation dataset
+# Keep this file in the yolo_seg dataset root so paths stay portable across machines.
+train: images/train
+val: images/val
+
+names:
+  0: out
+  1: in
