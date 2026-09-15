@@ -6,15 +6,25 @@
 
 - 固定工业场景中的圆环工件缺陷检测，原图分辨率 `5472×3648`。
 - 采用两阶段架构：第一阶段实例分割得到圆环 ROI，第二阶段在 ROI 内进行小目标缺陷检测。
-- 当前阶段只训练第一阶段，使用官方预训练权重 `yolov8s-seg.pt`。
 
-## 代码与环境
+## 代码与目录
 
 - 仓库：`git@github.com:BigFang007/ultralytics.git`
 - 分支：`project/pt-defect`
 - Mac Conda 环境：`ultralytics`；本机无 CUDA/MPS，仅用于数据准备。
-- AutoDL 计划目录：代码 `/root/autodl-tmp/ultralytics`，数据 `/root/autodl-tmp/yolo_seg`。
-- 推荐单卡 RTX 4090 24GB；先训练 `imgsz=640` 基线，边界精度不足再对比 `imgsz=1024`。
+- AutoDL 实际代码目录：`/root/ultralytics`；仓库 HEAD 为
+  `38e876eacb7dc66e620ffea49279e04bf4401336`，工作区在训练检查时保持干净。
+- AutoDL 数据目录：YAML 为 `/root/autodl-tmp/pt_ring_seg.yaml`，图像和标签分别位于
+  `/root/autodl-tmp/{images,labels}/{train,val}`。
+- 训练日志根目录：`/root/tf-logs`。注意该目录位于 30 GB 系统盘，不是 50 GB 数据盘，训练权重需及时备份。
+
+## 训练环境
+
+- 服务器系统为 Ubuntu 22.04.3 LTS，128 个逻辑 CPU、约 1.0 TiB 内存，无 Swap。
+- GPU 为单卡 NVIDIA GeForce RTX 4090 24 GB（24564 MiB），驱动 `560.35.03`，`nvidia-smi` 显示最高支持
+  CUDA 12.6。
+- Python 环境位于 `/root/miniconda3`：Python 3.10.8、Ultralytics 8.4.115、PyTorch 2.1.2+cu121、
+  torchvision 0.16.2+cu121、NumPy 1.26.3、CUDA Runtime 12.1、cuDNN 8.9.2。
 
 ## 分割数据集
 
@@ -35,6 +45,8 @@ yolo_seg/
 - 每个 Labelme 圆转换为 72 点归一化多边形，框架检查结果为 69 张、138 个实例、0 损坏。
 - 训练保持 `overlap_mask=True`：内圆覆盖外圆的重叠像素，使 `out` 监督区域成为圆环，`in` 为内部圆盘。
 - 数据集 YAML 不含绝对 `path`，必须放在 `yolo_seg` 根目录以便跨机器迁移。
+- AutoDL 上采用扁平部署：`pt_ring_seg.yaml` 与 `images/`、`labels/` 同在 `/root/autodl-tmp`；实测数量为
+  train 图像/标签各 50，val 图像/标签各 19。
 
 ## 相关文件
 
@@ -43,17 +55,31 @@ yolo_seg/
 - `my_tool/pt_ring_seg.yaml`：可迁移的数据集配置模板。
 - `my_tool/analyze_seg_dataset.py`：本地数据分析工具，当前未纳入 Git。
 
-## AutoDL 首次训练
+## 分割阶段首次训练（已完成）
 
-上传数据并安装当前仓库后先执行冒烟训练：
+执行命令：
 
 ```bash
 yolo segment train \
   model=yolov8n-seg.pt \
-  data=/root/autodl-tmp/yolo_seg/pt_ring_seg.yaml \
-  epochs=3 imgsz=640 batch=8 device=0 workers=4 \
-  overlap_mask=True mosaic=0.0 \
-  project=/root/autodl-tmp/runs/pt_ring_seg name=smoke
+  data=/root/autodl-tmp/pt_ring_seg.yaml \
+  epochs=150 imgsz=1024 batch=-1 device=0 overlap_mask=True \
+  project=/root/tf-logs/yolo_seg name=yolov8n_1024
 ```
 
-确认标签、类别和预测正常后，再用 `yolov8s-seg.pt` 训练约 150 epochs。训练结果和 `best.pt` 放在数据盘并及时备份。第二阶段缺陷类别、标签和切片策略尚未确定。
+- 因同名目录已由前一次启动创建且 `exist_ok=False`，实际有效输出目录为
+  `/root/tf-logs/yolo_seg/yolov8n_1024-2`；`/root/tf-logs/yolo_seg/yolov8n_1024` 不是本次有效结果。
+- 实际参数还包括：`workers=8`、`optimizer=auto`、`amp=True`、`deterministic=True`、`mosaic=1.0`、
+  `close_mosaic=10`、`overlap_mask=True`。
+- 训练时间：2026-09-15 09:56 至 10:06（Asia/Shanghai），150 epochs 总耗时 617.648 秒，进程正常退出。
+- 训练期间显存占用约 6.07 GiB（`nvidia-smi` 采样约 6831 MiB），未发现 OOM、标签损坏或训练中断。
+- 最后一轮 box 指标：P 0.99693、R 1.0、mAP50 0.995、mAP50-95 0.96878。
+- 最后一轮 mask 指标：P 0.99693、R 1.0、mAP50 0.995、mAP50-95 0.87731。
+- 单项最佳值：box mAP50-95 为 0.97225（epoch 149），mask mAP50-95 为 0.89051（epoch 93）。
+  `best.pt` 由框架综合 fitness 选取，不应仅凭某个单项最大值推断对应 epoch。
+- 权重：`weights/best.pt` 和 `weights/last.pt` 均约 6.8 MB；`best.pt` SHA-256 为
+  `7873182ff4f8118fde8e6e38428f588e1ff7b2c9716fc4b4d6b7a1964244938d`。
+- 训练产物齐全，包括 `results.csv`、`results.png`、PR/F1/P/R 曲线、混淆矩阵和验证预测图。
+
+下一步应使用 `best.pt` 对原始高分辨率图像做可视化验证，重点检查圆环边界和内外圆掩膜，再决定是否训练
+`yolov8s-seg.pt` 对照实验。第二阶段缺陷类别、标签和切片策略尚未确定。
